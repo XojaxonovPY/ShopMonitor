@@ -1,77 +1,144 @@
 from datetime import datetime
-from typing import Optional
-from sqlalchemy import update, text, func
-from sqlalchemy.ext.declarative import declared_attr
-from sqlmodel import SQLModel, Field, select
+from typing import Type, TypeVar, Any
 
-from db.sessions import SessionDep
+from fastapi import HTTPException, status
+from sqlalchemy import Result, Update, Select, TextClause, Insert, Delete
+from sqlalchemy import select, update, insert, text, delete, DateTime
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError, DataError
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, declared_attr
+
+T = TypeVar("T", bound="Model")
 
 
-class AbstractClass:
+class Base(DeclarativeBase):
+    pass
+
+
+class Manager:
     @classmethod
-    async def create(cls, session: SessionDep, **kwargs):
-        obj = cls(**kwargs)
-        session.add(obj)
-        await session.commit()
-        await session.refresh(obj)
-        return obj
-
-    @classmethod
-    async def update(cls, session: SessionDep, id_: int, values: dict):
-        stmt = update(cls).filter(cls.id == id_).values(**values)
-        await session.execute(stmt)
-        await session.commit()
-        return await session.get(cls, id_)
-
-    @classmethod
-    async def delete(cls, session: SessionDep, id_: int):
-        obj = await session.get(cls, id_)
-        await session.delete(obj)
-        await session.commit()
-        return True
+    async def create(cls: Type[T], session: AsyncSession, **values):
+        try:
+            stmt: Insert = insert(cls).values(**values).returning(cls)
+            obj: Result[Any] = await session.execute(stmt)
+            await session.commit()
+            return obj.scalar_one()
+        except (IntegrityError, DataError, SQLAlchemyError) as e:
+            await session.rollback()
+            cls._handle_db_error(e)
 
     @classmethod
-    async def get_all(cls, session: SessionDep, sorted_by: list[str] = None):
-        stmt = select(cls)
-        if sorted_by:
-            stmt = stmt.order_by(*sorted_by)
-        result = await session.execute(stmt)
-        return result.scalars().all()
-
-    @classmethod
-    async def get(cls, session: SessionDep, filter_column, filter_value, all_=False):
-        stmt = select(cls).where(filter_column == filter_value)
-        result = await session.execute(stmt)
-        if all_:
+    async def all_(cls, session: AsyncSession, order_by=None):
+        try:
+            stmt: Select[Any] = select(cls)
+            if order_by is not None:
+                stmt = stmt.order_by(order_by)
+            result: Result[Any] = await session.execute(stmt)
             return result.scalars().all()
-        return result.scalars().first()
+        except SQLAlchemyError as e:
+            cls._handle_db_error(e)
 
     @classmethod
-    async def query(cls, session: SessionDep, stmt, one=False):
-        query = await session.execute(stmt)
-        if one:
-            return query.scalars().first()
-        return query.scalars().all()
+    async def filter(cls: Type[T], session: AsyncSession, *filters, order_by=None):
+        try:
+            stmt: Select[Any] = select(cls).where(*filters)
+            if order_by is not None:
+                stmt = stmt.order_by(order_by)
+            result: Result[Any] = await session.execute(stmt)
+            return result.scalars().all()
+        except SQLAlchemyError as e:
+            cls._handle_db_error(e)
+
+    @classmethod
+    async def get(cls: Type[T], session: AsyncSession, **filters):
+        try:
+            stmt: Select[Any] = select(cls).filter_by(**filters)
+            result: Result[Any] = await session.execute(stmt)
+            return result.scalars().first()
+        except SQLAlchemyError as e:
+            cls._handle_db_error(e)
+
+    @classmethod
+    async def update(cls: Type[T], session: AsyncSession, id_: int, **values):
+        try:
+            stmt: Update = update(cls).filter_by(id=id_).values(**values).returning(cls)
+            obj: Result[Any] = await session.execute(stmt)
+            await session.commit()
+            if not obj:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"{cls.__name__} with id={id_} not found"
+                )
+            return obj
+        except (IntegrityError, DataError, SQLAlchemyError) as e:
+            await session.rollback()
+            cls._handle_db_error(e)
+
+    @classmethod
+    async def delete(cls: Type[T], session: AsyncSession, id_: int):
+        try:
+            stmt: Delete = delete(cls).filter_by(id=id_)
+            await session.execute(stmt)
+            await session.commit()
+            return True
+        except SQLAlchemyError as e:
+            await session.rollback()
+            cls._handle_db_error(e)
+            return False
+
+    @classmethod
+    async def query(cls: Type[T], session: AsyncSession, stmt, all_: bool = False):
+        try:
+            result: Result[Any] = await session.execute(stmt)
+            if all_:
+                return result.scalars().all()
+            return result.scalars().first()
+        except SQLAlchemyError as e:
+            cls._handle_db_error(e)
+
+    @staticmethod
+    async def core_get(session: AsyncSession, query: str, **params):
+        try:
+            stmt: TextClause = text(query)
+            result: Result[Any] = await session.execute(stmt, params)
+            return result.mappings().all()
+        except SQLAlchemyError as e:
+            Manager._handle_db_error(e)
+
+    @staticmethod
+    async def core_commit(session: AsyncSession, query: str, **params):
+        try:
+            stmt: TextClause = text(query)
+            await session.execute(stmt, params)
+            await session.commit()
+        except (IntegrityError, DataError, SQLAlchemyError) as e:
+            await session.rollback()
+            Manager._handle_db_error(e)
+
+    @staticmethod
+    def _handle_db_error(e: Exception):
+        if isinstance(e, IntegrityError):
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Ma'lumot nusxalangan: {str(e.orig)}"
+            )
+        if isinstance(e, DataError):
+            raise HTTPException(
+                status_code=status.HTTP_402_PAYMENT_REQUIRED,
+                detail=f"Noto'g'ri ma'lumot: {str(e.orig)}"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Baza xatosi: {str(e)}"
+        )
 
 
-class CreatedModel(SQLModel, AbstractClass, table=False):
+class Model(Base, Manager):
+    __abstract__ = True
+
     @declared_attr
     def __tablename__(cls):
         return cls.__name__.lower() + "s"
 
-    id: Optional[int] = Field(primary_key=True)
-
-    created_at: datetime = Field(
-        sa_column_kwargs={
-            "server_default": text("(datetime('now'))"),  # SQLite
-            "nullable": False,
-        },
-    )
-
-    updated_at: datetime = Field(
-        sa_column_kwargs={
-            "server_default": text("(datetime('now'))"),  # SQLite
-            "onupdate": func.now(),
-            "nullable": False,
-        },
-    )
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=text('CURRENT_TIMESTAMP'))
