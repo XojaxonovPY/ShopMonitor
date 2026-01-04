@@ -1,28 +1,18 @@
 from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
 
 
-class LoginForm(BaseModel):
-    email: EmailStr = None
-    password: str = None
+class LoginSchema(BaseModel):
+    email: EmailStr
+    password: str
 
 
-class RegisterForm(BaseModel):
-    full_name: str = None
-    email: EmailStr = None
-    password: str = Field(min_length=4)
+class RegisterSchema(BaseModel):
+    full_name: str
+    email: EmailStr
+    password: str = Field(min_length=4, max_length=15)
 
 
-class VerifyCodeForm(BaseModel):
-    code: str
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    refresh_token: str
-    token_type: str = "bearer"
-
-
-class UrlForm(BaseModel):
+class UrlSchema(BaseModel):
     url: HttpUrl
 
     @field_validator("url")

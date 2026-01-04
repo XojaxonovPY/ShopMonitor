@@ -1,71 +1,76 @@
 import json
 import random
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, HTTPException, status, Body
+from fastapi.responses import JSONResponse
 
+from apps.depends import SessionDep
 from db.models import User
-from db.sessions import SessionDep
-from instruments.forms import RegisterForm, LoginForm, TokenResponse, VerifyCodeForm
+from instruments.login import create_refresh_token, verify_token, get_password_hash, UserSession
 from instruments.login import get_user, create_access_token, verify_password
-from instruments.login import get_current_user, create_refresh_token, verify_token, get_password_hash
 from instruments.tasks import send_verification_code
+from schemas import RegisterSchema, LoginSchema, UserResponseSchema
+from schemas import TokenResponseSchema, MessageResponseSchema
 from utils.settings import redis
 
-login_register = APIRouter()
+router = APIRouter()
+
+BodyStr = Annotated[str, Body(embed=True)]
 
 
-@login_register.post("/user/register")
-async def register(session: SessionDep, user: RegisterForm):
-    query = await User.get(session, User.email, user.email)
+@router.post("/user/register", response_model=MessageResponseSchema, status_code=status.HTTP_200_OK)
+async def register(session: SessionDep, user: RegisterSchema) -> JSONResponse:
+    query: User | None = await User.get(session, email=user.email)
     if query:
-        raise HTTPException(status_code=400, detail="Email is already registered")
-
-    data = {
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is already registered")
+    data: dict = {
         "full_name": user.full_name,
         "email": user.email,
         'password': await get_password_hash(user.password)
     }
-
-    code = str(random.randrange(10 ** 5, 10 ** 6))
+    code: str = str(random.randrange(10 ** 5, 10 ** 6))
     await redis.set(code, json.dumps(data))
     await send_verification_code(data, code=code)
-    return {'message': 'emailga tastiqlash code yuborildi'}
+    return JSONResponse({'message': 'emailga tastiqlash code yuborildi'})
 
 
-@login_register.post("/user/verify/code/", response_model=User)
-async def verify_code(session: SessionDep, code: VerifyCodeForm):
-    data = await redis.get(code.code)
+@router.post("/user/verify/code/", response_model=UserResponseSchema, status_code=status.HTTP_201_CREATED)
+async def verify_code(session: SessionDep, code: BodyStr) -> User:
+    data = await redis.get(code)
     if not data:
-        raise HTTPException(status_code=400, detail="Incorrect code")
-    user_data = json.loads(data)
-    user = await User.create(session, **user_data)
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect code")
+    user_data: dict = json.loads(data)
+    user: User = await User.create(session, **user_data)
     return user
 
 
-@login_register.post("/login/", response_model=TokenResponse)
-async def login(session: SessionDep, form_data: LoginForm):
-    user = await get_user(session, form_data.email)
+@router.post("/login/", response_model=TokenResponseSchema, status_code=status.HTTP_200_OK)
+async def login(session: SessionDep, form_data: LoginSchema) -> JSONResponse:
+    user: User | None = await get_user(session, email=form_data.email)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect email or password")
     verify = await verify_password(form_data.password, user.password)
-    if not user or not verify:
-        raise HTTPException(status_code=400, detail="Incorrect email or password")
+    if not verify:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Incorrect email or password")
 
-    access_token = await create_access_token(data={"sub": user.email})
-    refresh_token = await create_refresh_token(data={"sub": user.email})
-    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
+    access_token: str = await create_access_token(data={"sub": user.email})
+    refresh_token_: str = await create_refresh_token(data={"sub": user.email})
+    return JSONResponse({"access_token": access_token, "refresh_token": refresh_token_, "token_type": "bearer"})
 
 
-@login_register.post("/refresh", response_model=TokenResponse)
-async def refresh_token(refresh_token: str):
-    payload = await verify_token(refresh_token)
+@router.post("/refresh", response_model=TokenResponseSchema, status_code=status.HTTP_200_OK)
+async def refresh_token(refresh_token_: BodyStr) -> JSONResponse:
+    payload: dict = await verify_token(refresh_token_)
     if not payload:
         raise HTTPException(status_code=401, detail="Invalid refresh token")
 
-    user_data = {"sub": payload["sub"]}
-    new_access_token = await create_access_token(user_data)
-    new_refresh_token = await create_refresh_token(user_data)
-    return {"access_token": new_access_token, "refresh_token": new_refresh_token}
+    user_data: dict = {"sub": payload.get("sub")}
+    new_access_token: str = await create_access_token(user_data)
+    new_refresh_token: str = await create_refresh_token(user_data)
+    return JSONResponse({"access_token": new_access_token, "refresh_token": new_refresh_token})
 
 
-@login_register.get("/users/me")
-async def read_users_me(current_user: dict = Depends(get_current_user)):
+@router.get("/users/me", response_model=UserResponseSchema, status_code=status.HTTP_200_OK)
+async def read_users_me(current_user: UserSession) -> User:
     return current_user

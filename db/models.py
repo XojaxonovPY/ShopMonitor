@@ -1,44 +1,33 @@
-import asyncio
+from sqlalchemy import String, Boolean, Text, ForeignKey
+from sqlalchemy.orm import Mapped, relationship, mapped_column
 
-from sqlalchemy import String, Integer, Boolean, Text
-from sqlmodel import Field, SQLModel, Relationship
-
-from db import engine
-from db.config import CreatedModel
+from db.config import Model, Base
 
 
-class User(CreatedModel, table=True):
-    full_name: str = Field(sa_type=String)
-    email: str = Field(sa_type=String, unique=True)
-    password: str = Field(sa_type=String)
+class User(Model):
+    full_name: Mapped[str] = mapped_column(String(length=55))
+    email: Mapped[str] = mapped_column(String(length=55), unique=True)
+    password: Mapped[str] = mapped_column(String(length=25))
 
-    products: list['Product'] = Relationship(back_populates="user")
-
-
-class Product(CreatedModel, table=True):
-    name: str = Field(sa_type=String)
-    current_price: str = Field(sa_type=String)
-    user_id: int = Field(sa_type=Integer, foreign_key="users.id", ondelete='CASCADE')
-    user: 'User' = Relationship(back_populates="products")
-    url: str = Field(sa_type=Text)
-
-    prices: list['Price'] = Relationship(back_populates="product")
+    products: Mapped[list['Product']] = relationship('Product', back_populates="user", lazy='selectin')
 
 
-class Price(CreatedModel, table=True):
-    price: str = Field(sa_type=String)
-    product_id: int = Field(sa_type=Integer, foreign_key="products.id", ondelete='CASCADE')
-    check_at: bool = Field(sa_type=Boolean, default=False)
+class Product(Model):
+    name: Mapped[str] = mapped_column(String(length=70))
+    current_price: Mapped[str] = mapped_column(String(length=55))
+    user_id: Mapped[int] = mapped_column(ForeignKey('users.id', ondelete='CASCADE'))
+    url: Mapped[str] = mapped_column(Text)
+    user: Mapped['User'] = relationship(back_populates="products")
 
-    product: 'Product' = Relationship(back_populates="prices")
-
-
-async def create_db_and_tables():
-    async with engine.begin() as conn:
-        await conn.run_sync(SQLModel.metadata.create_all)
+    prices: Mapped[list['Price']] = relationship('Price', back_populates="product", lazy='selectin')
 
 
-metadata = SQLModel.metadata
+class Price(Model):
+    price: Mapped[str] = mapped_column(String(length=50))
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete='CASCADE'))
+    check_at: Mapped[bool] = mapped_column(Boolean, default=False)
 
-if __name__ == "__main__":
-    asyncio.run(create_db_and_tables())
+    product: Mapped['Product'] = relationship('Product', back_populates="prices", lazy='joined')
+
+
+metadata = Base.metadata

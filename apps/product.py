@@ -1,21 +1,29 @@
-from fastapi import APIRouter, Depends
-from selenium import webdriver
+from typing import Any
+
+from fastapi import APIRouter, status
+from fastapi.responses import JSONResponse
+from selenium.webdriver import Chrome, ChromeOptions
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
+from apps.depends import SessionDep
 from db.models import Product, Price
-from db.sessions import SessionDep
-from instruments.forms import UrlForm
-from instruments.login import get_current_user
+from instruments.login import UserSession
 from instruments.tasks import get_grapes_market, get_click_market
+from schemas import UrlSchema, ProductResponseSchema, PriceResponseSchema, MessageResponseSchema
 
-product = APIRouter()
+router = APIRouter()
+
+response: dict[str, Any] = {
+    'response_model': MessageResponseSchema,
+    "status_code": status.HTTP_205_RESET_CONTENT
+}
 
 
-@product.post('/products/', response_model=Product)
-async def get_product_title(session: SessionDep, form: UrlForm, current_user: dict = Depends(get_current_user)):
-    option = webdriver.ChromeOptions()
+@router.post('/products/', response_model=ProductResponseSchema)
+async def get_product_title(session: SessionDep, form: UrlSchema, user: UserSession):
+    option: ChromeOptions = ChromeOptions()
     option.add_argument('--headless')
     option.add_argument('--incognito')
     option.add_argument('--ignore-certificate-errors')
@@ -24,8 +32,8 @@ async def get_product_title(session: SessionDep, form: UrlForm, current_user: di
     option.add_argument('--disable-blink-features=AutomationControlled')
     option.add_argument('--user-agent=Selenium')
     service = Service(executable_path=ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=option)
-    wait = WebDriverWait(driver, 15, poll_frequency=1)
+    driver: Chrome = Chrome(service=service, options=option)
+    wait: WebDriverWait = WebDriverWait(driver, 15, poll_frequency=1)
     product_data = None
     if form.url.host == 'uzum.uz':
         driver.get(str(form.url))
@@ -33,7 +41,7 @@ async def get_product_title(session: SessionDep, form: UrlForm, current_user: di
     if form.url.host == 'clickbrandshop.robostore.uz':
         driver.get(str(form.url))
         product_data = await get_click_market(wait, str(form.url))
-    query: Product = await Product.get(session, Product.url, product_data.get('url'))
+    query: Product = await Product.get(session, url=product_data.get('url'))
     if query:
         price_data = {
             'product_id': query.id,
@@ -42,7 +50,7 @@ async def get_product_title(session: SessionDep, form: UrlForm, current_user: di
         await Price.create(session, **price_data)
         driver.quit()
         return query
-    products = await Product.create(session, **product_data, user_id=current_user.id)
+    products: Product = await Product.create(session, **product_data, user_id=user.id)
     price_data = {
         'product_id': products.id,
         'price': product_data.get('current_price')
@@ -52,25 +60,25 @@ async def get_product_title(session: SessionDep, form: UrlForm, current_user: di
     return product_data
 
 
-@product.get('/all/products/', response_model=list[Product])
-async def get_all_products(session: SessionDep, current_user: dict = Depends(get_current_user)):
-    products = await Product.get_all(session)
+@router.get('/all/products/', response_model=list[ProductResponseSchema])
+async def get_all_products(session: SessionDep, user: UserSession):
+    products = await Product.all_(session)
     return products
 
 
-@product.get('/products/{id}/', response_model=Product)
-async def get_one_product(session: SessionDep, pk: int, current_user: dict = Depends(get_current_user)):
-    product_one = await Product.get(session, Product.id, pk)
+@router.get('/products/{id}/', response_model=ProductResponseSchema)
+async def get_one_product(session: SessionDep, pk: int, user: UserSession):
+    product_one = await Product.get(session, id=pk)
     return product_one
 
 
-@product.get('products/prices/all/{pk}', response_model=list[Price])
-async def get_all_prices(session: SessionDep, pk: int, current_user: dict = Depends(get_current_user)):
-    prices = Price.get(session, Price.product_id, pk, all_=True)
+@router.get('products/prices/all/{pk}', response_model=list[PriceResponseSchema])
+async def get_all_prices(session: SessionDep, pk: int, user: UserSession):
+    prices = Price.filter(session, Price.product_id == pk)
     return prices
 
 
-@product.delete("/products/{id}/", responses={205: {"description": "Product deleted successfully"}})
-async def delete_product(session: SessionDep, pk: int, current_user: dict = Depends(get_current_user)):
+@router.delete("/products/{id}/", **response)
+async def delete_product(session: SessionDep, pk: int, user: UserSession):
     await Product.delete(session, pk)
-    return {'message': 'Product deleted successfully'}
+    return JSONResponse({'message': 'Product deleted successfully'})

@@ -3,6 +3,8 @@ from email.message import EmailMessage
 import aiosmtplib
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
+
 from utils.settings import Settings
 
 
@@ -57,7 +59,7 @@ async def send_verification_code(user: dict, code: str):
     )
 
 
-async def get_grapes_market(wait, url):
+async def get_grapes_market(wait: WebDriverWait, url: str) -> dict:
     name = (By.XPATH, "//h1[@class='HeadlineSSemibold title']")
     price = (By.XPATH, "//div[@class='u-currency sell-price']")
     product_data = {
@@ -68,16 +70,12 @@ async def get_grapes_market(wait, url):
     return product_data
 
 
-async def get_click_market(wait, url):
+async def get_click_market(wait: WebDriverWait, url: str) -> dict:
     name = (By.XPATH, "(//span[@class='MuiTypography-root MuiTypography-title20 mui-style-9dzjks'])[2]")
     price = (By.XPATH, '(//span[@class="MuiTypography-root MuiTypography-title50 mui-style-1qkd03h"])[2]')
-    product_data = {
+    product_data: dict = {
         'name': wait.until(EC.presence_of_element_located(name)).text,
         'current_price': wait.until(EC.presence_of_element_located(price)).text,
         'url': url,
     }
     return product_data
-
-
-
-
