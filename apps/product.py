@@ -11,17 +11,16 @@ from apps.depends import SessionDep
 from db.models import Product, Price
 from instruments.login import UserSession
 from instruments.tasks import get_grapes_market, get_click_market
-from schemas import UrlSchema, ProductResponseSchema, PriceResponseSchema, MessageResponseSchema
+from schemas import UrlSchema, ProductResponseSchema, PriceResponseSchema
 
 router = APIRouter()
 
 response: dict[str, Any] = {
-    'response_model': MessageResponseSchema,
     "status_code": status.HTTP_205_RESET_CONTENT
 }
 
 
-@router.post('/products/', response_model=ProductResponseSchema)
+@router.post('/products/', response_model=ProductResponseSchema, status_code=status.HTTP_201_CREATED)
 async def get_product_title(session: SessionDep, form: UrlSchema, user: UserSession):
     option: ChromeOptions = ChromeOptions()
     option.add_argument('--headless')
@@ -41,7 +40,7 @@ async def get_product_title(session: SessionDep, form: UrlSchema, user: UserSess
     if form.url.host == 'clickbrandshop.robostore.uz':
         driver.get(str(form.url))
         product_data = await get_click_market(wait, str(form.url))
-    query: Product = await Product.get(session, url=product_data.get('url'))
+    query: Product | None = await Product.get(session, url=product_data.get('url'))
     if query:
         price_data = {
             'product_id': query.id,

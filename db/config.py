@@ -20,9 +20,10 @@ class Manager:
     async def create(cls: Type[T], session: AsyncSession, **values):
         try:
             stmt: Insert = insert(cls).values(**values).returning(cls)
-            obj: Result[Any] = await session.execute(stmt)
+            result: Result[Any] = await session.execute(stmt)
+            obj: Any = result.scalar_one()
             await session.commit()
-            return obj.scalar_one()
+            return obj
         except (IntegrityError, DataError, SQLAlchemyError) as e:
             await session.rollback()
             cls._handle_db_error(e)
@@ -62,7 +63,8 @@ class Manager:
     async def update(cls: Type[T], session: AsyncSession, id_: int, **values):
         try:
             stmt: Update = update(cls).filter_by(id=id_).values(**values).returning(cls)
-            obj: Result[Any] = await session.execute(stmt)
+            result: Result[Any] = await session.execute(stmt)
+            obj: Any = result.scalar_one_or_none()
             await session.commit()
             if not obj:
                 raise HTTPException(
