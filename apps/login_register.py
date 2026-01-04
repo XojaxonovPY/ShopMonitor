@@ -2,7 +2,7 @@ import json
 import random
 from typing import Annotated
 
-from fastapi import APIRouter, HTTPException, status, Body
+from fastapi import APIRouter, HTTPException, status, Body, BackgroundTasks
 from fastapi.responses import JSONResponse
 
 from apps.depends import SessionDep
@@ -20,7 +20,7 @@ BodyStr = Annotated[str, Body(embed=True)]
 
 
 @router.post("/user/register", response_model=MessageResponseSchema, status_code=status.HTTP_200_OK)
-async def register(session: SessionDep, user: RegisterSchema) -> JSONResponse:
+async def register(session: SessionDep, user: RegisterSchema, tasks: BackgroundTasks) -> JSONResponse:
     query: User | None = await User.get(session, email=user.email)
     if query:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is already registered")
@@ -31,7 +31,7 @@ async def register(session: SessionDep, user: RegisterSchema) -> JSONResponse:
     }
     code: str = str(random.randrange(10 ** 5, 10 ** 6))
     await redis.set(code, json.dumps(data))
-    await send_verification_code(data, code=code)
+    tasks.add_task(send_verification_code, data, code)
     return JSONResponse({'message': 'emailga tastiqlash code yuborildi'})
 
 

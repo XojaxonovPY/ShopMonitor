@@ -10,10 +10,12 @@ from fastapi.security import OAuth2PasswordBearer
 
 from apps import main_router
 from db import engine
+from instruments.schedular import start_scheduler
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator:
+    start_scheduler()
     # async with engine.begin() as conn:
     #     await conn.run_sync(Base.metadata.create_all)
 

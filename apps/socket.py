@@ -53,7 +53,8 @@ async def get_products(websocket: WebSocket, token: str):
             async with AsyncSessionLocal() as session:
                 products: list[Product] = await Product.query(
                     session,
-                    select(Product).join(User).where(User.email == email)
+                    select(Product)
+                    .join(User).where(User.email == email)
                     .order_by(Product.current_price, Product.name), all_=True
                 )
                 data: list[dict[str, Any]] = [

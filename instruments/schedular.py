@@ -24,6 +24,7 @@ async def update_product_price():
         wait: WebDriverWait = WebDriverWait(driver, 15, poll_frequency=1)
         products: list[Product] = await Product.all_(session)
         product_data: dict | None = None
+        current_price: str | None = None
         for product in products:
             if product.url.startswith("https://clickbrandshop.robostore.uz"):
                 driver.get(product.url)
@@ -31,7 +32,8 @@ async def update_product_price():
             elif product.url.startswith("https://uzum.uz/uz"):
                 driver.get(product.url)
                 product_data: dict = await get_grapes_market(wait, product.url)
-            current_price: str | None = product_data.get('current_price')
+            if isinstance(product_data, dict):
+                current_price = product_data.get('current_price')
             if current_price and current_price != product.current_price:
                 print(f"🔄 {product.name}: {product.current_price} → {current_price}")
                 await Product.update(session, product.id, current_price=current_price)

@@ -89,7 +89,7 @@ class Manager:
             return False
 
     @classmethod
-    async def query(cls: Type[T], session: AsyncSession, stmt, all_: bool = False):
+    async def query(cls: Type[T], session: AsyncSession, stmt: Select[Any], all_: bool = False):
         try:
             result: Result[Any] = await session.execute(stmt)
             if all_:
